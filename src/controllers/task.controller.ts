@@ -9,6 +9,8 @@ import { projectIdSchema } from "../validation/project.validation";
 import { workspaceIdSchema } from "../validation/workspace.validation";
 import { Permissions } from "../enums/role.enum";
 import { getMemberRoleInWorkspace } from "../services/member.service";
+import UserModel from "../models/user.model";
+import { notifyUser } from "../emails/utils/task-notify";
 import { roleGuard } from "../utils/roleGuard";
 import {
   createTaskService,
@@ -23,22 +25,54 @@ export const createTaskController = asyncHandler(
   async (req: Request, res: Response) => {
     const userId = req.headers["userid"] as string;
 
+    // Parse body and parameters
     const body = createTaskSchema.parse(req.body);
     const projectId = projectIdSchema.parse(req.params.projectId);
     const workspaceId = workspaceIdSchema.parse(req.params.workspaceId);
 
+    // Get member role in workspace and validate permissions
     const { role } = await getMemberRoleInWorkspace(userId, workspaceId);
     roleGuard(role, [Permissions.CREATE_TASK]);
 
-    const { task } = await createTaskService(
-      workspaceId,
-      projectId,
-      userId,
-      body
-    );
+    // Create the task
+    const { task } = await createTaskService(workspaceId, projectId, userId, body);
 
+    // Fetch the assigned user from the database using the ObjectId
+    const assignedUser = await UserModel.findById(body.assignedTo);
+
+    // If the user is not found, respond with an error
+    if (!assignedUser) {
+      return res.status(HTTPSTATUS.BAD_REQUEST).json({
+        message: "Assigned user not found.",
+      });
+    }
+
+    // Extract the email from the assigned user
+    const assignedEmail = assignedUser.email;
+
+    // Compose the email content
+    const subject = 'Task Assigned: ' + task.title;
+    const message = `
+      <p>Hello ${assignedUser.name},</p>
+      <p>You have been assigned a new task. <strong><a href=https://${process.env.FRONTEND_ORIGIN}/workspace/${workspaceId}/project/${projectId}>View Project</a></strong>.</p>
+      <p><strong>Task Details:</strong></p>
+      <p><strong>Title:</strong> ${task.title}</p>
+      <p><strong>Description:</strong> ${task.description}</p>
+      <p>Please check the task board for further details.</p>
+      <p>Best regards,<br/>TechRise Bot.</p>
+    `;
+
+    // Send email notification asynchronously (does not block the response)
+    try {
+      await notifyUser({ userEmail: assignedEmail, subject, message });
+    } catch (error) {
+      console.error("Error sending email:", error);
+      // Optionally, you can log the error or handle the failure but still return the response
+    }
+
+    // Send the success response
     return res.status(HTTPSTATUS.OK).json({
-      message: "Task created successfully",
+      message: "Task created successfully and notification sent.",
       task,
     });
   }
