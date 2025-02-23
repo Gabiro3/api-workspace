@@ -57,7 +57,14 @@ app.use(`${BASE_PATH}/task`, isAuthenticated, taskRoutes);
 
 app.use(errorHandler);
 
-app.listen(config.PORT, async () => {
-  console.log(`Server listening on port ${config.PORT} in ${config.NODE_ENV}`);
-  await connectDatabase();
-});
+app.get("/",(request,response)=>{
+  ///server to client
+  response.json({
+      message : "Server is running " + config.PORT
+  })
+})
+connectDatabase().then(()=>{
+  app.listen(config.PORT,()=>{
+      console.log("Server is live",config.PORT)
+  })
+})
